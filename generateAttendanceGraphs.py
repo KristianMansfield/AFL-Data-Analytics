@@ -1,21 +1,17 @@
 #!/usr/bin/env python
 
 import matplotlib.pyplot as plt
-import pymysql
 import sys
 import numpy as np
 from dbConnection import createReaderConnection
 
-dbhandler = createReaderConnection()
+db = createReaderConnection()
 
-cursor = dbhandler.cursor()
-
-# sql = "SELECT id, final_home_score, final_away_score, attendance, final_home_score - final_away_score as Margin FROM games WHERE home_team = 14;"
+# sql = "SELECT id, final_home_score, final_away_score, attendance, final_home_score - final_away_score as Margin FROM games WHERE home_team = (SELECT id FROM teams WHERE location = 'Collingwood');"
 sql = sys.argv[1]
 
-cursor.execute(sql)
-
-results = cursor.fetchall()
+results = db.fetchall(sql)
+db.close()
 
 attendances = []
 margins = []
