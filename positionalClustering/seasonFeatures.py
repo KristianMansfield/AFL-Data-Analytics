@@ -14,7 +14,8 @@
 #   - per-game values that shouldn't be scaled by game time (time on ground itself, interchanges,
 #     age, captaincy, sub on/off, wins) as plain season averages
 #   - height and weight, and the share of games the player was named in each team-sheet position
-# Every feature is then standardised into z-scores within its season.
+# Only the features switched on in features.ini (or the file given with --features) are kept,
+# and each is then standardised into z-scores within its season.
 #
 # Why it matters for the analysis: clustering is only as good as the space the players are placed
 # in. Aggregating over a whole season smooths out single-game noise. Scaling by time on ground
@@ -24,6 +25,7 @@
 # results can be compared fairly.
 
 import argparse
+import configparser
 import os
 import sys
 
@@ -34,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dbConnection import createReaderConnection  # noqa: E402
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+FEATURES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "features.ini")
 
 # Counting stats from player_game_stats (filled from afl.com.au where afl.com.au has the game).
 # games/wins/draws/losses and the *_to_date/*_with_club columns are career counters, not stats
@@ -81,9 +84,10 @@ NAMED_POSITION_GROUPS = {
 
 PLAYER_ATTRIBUTES = ["height", "weight"]
 
-# Award votes and ratings: left out unless asked for with --include, so the roles found don't
-# depend on the awards they will later be used to predict
-AWARD_FEATURES = ["brownlow_votes", "rating_points", "dream_team_points"]
+ALL_FEATURES = (
+    BASIC_COUNT_STATS + AFLCOM_COUNT_STATS + AFLCOM_RATE_STATS + GAME_AVERAGES + PLAYER_ATTRIBUTES
+    + [f"named_{group}" for group in sorted(set(NAMED_POSITION_GROUPS.values()))]
+)
 
 GAMES_SQL = f"""
 SELECT
@@ -150,12 +154,33 @@ def addCommonArguments(parser):
         help="Features to leave out, e.g. --drop bounces kickins",
     )
     parser.add_argument(
-        "--include", nargs="*", default=[], choices=AWARD_FEATURES, metavar="FEATURE",
-        help="Award features to use, which are left out by default: "
-        + ", ".join(AWARD_FEATURES),
+        "--features", default=FEATURES_FILE,
+        help="File listing the stats to use (default features.ini next to these scripts)",
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default 0)")
     return parser
+
+
+def loadFeatureSelection(path):
+    """The features switched on in a features file: every stat listed, in any section, that
+    isn't commented out with #."""
+    config = configparser.ConfigParser(allow_no_value=True, inline_comment_prefixes=("#",),
+                                       delimiters=("=",))
+    config.optionxform = str  # keep named_FF etc. in their original case
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            config.read_file(fh)
+    except OSError as error:
+        sys.exit(f"Can't read the features file: {error}")
+    selected = [option for section in config.sections() for option in config.options(section)]
+
+    unknown = [f for f in selected if f not in ALL_FEATURES]
+    if unknown:
+        sys.exit(f"Unknown stats in {path}: {', '.join(unknown)}\n"
+                 f"Known stats: {', '.join(ALL_FEATURES)}")
+    if not selected:
+        sys.exit(f"No stats are switched on in {path}")
+    return selected
 
 
 def loadGames(years, include_finals=False):
@@ -263,12 +288,16 @@ def prepare(args):
     print(f"{len(info)} player-seasons with at least {args.min_games} games "
           f"({(~keep).sum()} below the minimum)")
 
-    drop = {c: "award feature (use --include to keep it)"
-            for c in AWARD_FEATURES if c not in args.include}
+    selected = loadFeatureSelection(args.features)
+    unselected = [c for c in raw.columns if c not in selected]
+    print(f"Using {len(selected)} of {len(ALL_FEATURES)} stats from {args.features}"
+          + (f" (switched off: {', '.join(unselected)})" if unselected else ""))
+    drop = {c: "switched off" for c in unselected}
     drop.update({c: "--drop" for c in args.drop})
     z, dropped = standardise(raw, info.index.get_level_values("year"), args.max_missing, drop)
     for column, reason in dropped:
-        print(f"  dropped {column}: {reason}")
+        if reason != "switched off":
+            print(f"  dropped {column}: {reason}")
     print(f"{z.shape[1]} features, standardised to z-scores within each season")
     return info, z
 
