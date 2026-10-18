@@ -53,7 +53,7 @@ def printSplits(tree, z, k):
 
 def main():
     parser = seasonFeatures.newParser("Positional roles with Ward hierarchical clustering")
-    parser.add_argument("--k-min", type=int, default=4, help="Fewest roles to try (default 4)")
+    parser.add_argument("--k-min", type=int, default=6, help="Fewest roles to try (default 6)")
     parser.add_argument("--k-max", type=int, default=16, help="Most roles to try (default 16)")
     parser.add_argument("--k", type=int, help="Cut the tree into this many roles")
     parser.add_argument(

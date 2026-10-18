@@ -66,7 +66,7 @@ def writeRoles(info, z, labels, probabilities, hybrid_threshold, out_dir):
 
 def main():
     parser = seasonFeatures.newParser("Positional roles with a Gaussian Mixture Model, k chosen by BIC")
-    parser.add_argument("--k-min", type=int, default=4, help="Fewest roles to try (default 4)")
+    parser.add_argument("--k-min", type=int, default=6, help="Fewest roles to try (default 6)")
     parser.add_argument("--k-max", type=int, default=16, help="Most roles to try (default 16)")
     parser.add_argument("--k", type=int, help="Use this many roles instead of choosing by BIC")
     parser.add_argument(

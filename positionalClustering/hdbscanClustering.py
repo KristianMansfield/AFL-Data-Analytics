@@ -31,8 +31,8 @@ import seasonFeatures
 def main():
     parser = seasonFeatures.newParser("Positional roles with HDBSCAN")
     parser.add_argument(
-        "--min-cluster-size", type=int, default=40,
-        help="Smallest group of player-seasons that counts as a role (default 40)",
+        "--min-cluster-size", type=int, default=15,
+        help="Smallest group of player-seasons that counts as a role (default 15)",
     )
     parser.add_argument(
         "--min-samples", type=int, default=5,
