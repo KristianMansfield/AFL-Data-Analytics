@@ -1,0 +1,27 @@
+# Local mirror written by scrapers/scrape_afltablescom.py
+data/afltables/
+
+# Local mirror written by scrapers/scrape_aflcom.py
+data/aflcom/
+
+# Just don't commit the data at all.
+data/
+
+# Local SQLite databases
+*.db
+*.db-journal
+
+__pycache__/
+
+# Test fixtures (scraped data; built by test/fetch_fixtures.py) and test reports
+test/fixtures/data/
+test/reports/
+.pytest_cache/
+
+# Reports written by the importers
+reports/
+
+# Docker compose settings (AFL_POSTGRES_PASSWORD)
+.env
+
+venv/
