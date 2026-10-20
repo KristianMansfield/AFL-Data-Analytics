@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 
-# The gradient-boosted ranking model: decision trees learn each player's impact in a game, ranked
-# against the other players in the same game.
+# The gradient-boosted ranking model: LightGBM decision trees learn each player's impact in a game,
+# ranked against the other players in the same game.
 #
 # What it does: starts every player at an impact of 0 and adds one small decision tree at a time,
-# each nudging the impacts in the direction that makes the votes actually given more likely. The
-# loss is listwise, the same Plackett-Luce likelihood as the Plackett-Luce model (also called
-# ListMLE): the 3 votes drawn from everyone in the game in proportion to exp(impact), the 2 votes
-# from the rest, then the 1 vote. Each tree is fitted to the loss's gradient divided by its
-# curvature (a Newton step, as XGBoost and LightGBM do), on a random half of the games to reduce
-# overfitting. The number of trees is chosen by holding out the last training season, stopping
-# once more trees stop improving it, then refitting on every training season.
+# each nudging the impacts so the votes actually given become more likely, judged game by game.
+# Two ranking objectives are available:
+#   - lambdarank: LightGBM's standard learning-to-rank objective. It optimises the order of the
+#     top three in each game (NDCG), treating 3 votes as more relevant than 2, and 2 than 1. Its
+#     scores rank players but aren't probabilities, so a single scale factor is fitted on a
+#     held-out season to turn them into Plackett-Luce impacts.
+#   - listmle: the Plackett-Luce likelihood itself, the same loss as the Plackett-Luce model (the
+#     3 votes drawn from everyone in the game in proportion to exp(impact), the 2 votes from the
+#     rest, then the 1 vote), given to LightGBM as a custom objective. Its scores are Plackett-Luce
+#     impacts already.
+# The number of trees is chosen by holding out the last training season and stopping once more
+# trees stop improving it, then refitting on every training season.
 #
-# Because the impacts are on the Plackett-Luce scale, they turn into exact chances of 3, 2 and 1
-# votes and a season tally the same way as in the Plackett-Luce model (rankedLogit.py,
-# seasonTally.py), so the two are compared like for like.
+# Because the impacts end up on the Plackett-Luce scale, they turn into exact chances of 3, 2 and
+# 1 votes and a season tally the same way as in the Plackett-Luce model (rankedLogit.py,
+# seasonTally.py), so the models are compared like for like.
 #
 # Why it matters for the analysis: the Plackett-Luce model's impact is a weighted sum, so a stat
 # always counts the same. Trees can learn that a stat counts more in some situations than others
@@ -22,16 +27,16 @@
 # and that it stops counting after a point. If those interactions matter to the umpires, this
 # model should beat the weighted sum.
 #
-# Using a dedicated library (LightGBM's LambdaRank) would be faster, but needs the OpenMP runtime
-# installed system-wide on macOS; this uses scikit-learn's trees, which are already installed.
+# LightGBM needs the OpenMP runtime; on macOS: brew install libomp
 
 import os
 import sys
 
+import lightgbm
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize_scalar
 from scipy.special import logsumexp
-from sklearn.tree import DecisionTreeRegressor
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "Plackett-Luce Model"))
@@ -45,13 +50,17 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 # stands in for it, as trees can pick out the useful part themselves
 GROUPS = ["basic", "advanced", "rating", "rank", "result", "progression", "form", "reputation"]
 
+OBJECTIVES = ["lambdarank", "listmle"]
+
 
 class GameStructure:
-    """The players in each game laid out as a (games, players) grid, for the listwise loss."""
+    """The players in each game laid out as a (games, players) grid, for the Plackett-Luce loss.
+    Rows must be sorted by game."""
 
     def __init__(self, frame):
         self.game_ids, self.game_index = np.unique(frame["game"].to_numpy(), return_inverse=True)
-        self.slot = frame.groupby("game").cumcount().to_numpy()
+        self.slot = frame.groupby("game", sort=True).cumcount().to_numpy()
+        self.sizes = np.bincount(self.game_index)
         shape = (len(self.game_ids), self.slot.max() + 1)
         self.mask = np.zeros(shape, dtype=bool)
         self.mask[self.game_index, self.slot] = True
@@ -100,65 +109,74 @@ class GameStructure:
 
 
 class BoostedRanker:
-    def __init__(self, features, learning_rate=0.1, max_trees=300, max_depth=4,
-                 min_samples_leaf=200, subsample=0.5, patience=30, seed=0):
+    def __init__(self, features, objective="listmle", learning_rate=0.05, num_leaves=15,
+                 min_data_in_leaf=200, max_rounds=1000, early_stopping=50, seed=0):
+        if objective not in OBJECTIVES:
+            raise ValueError(f"objective must be one of {OBJECTIVES}")
         self.features = list(features)
-        self.learning_rate = learning_rate
-        self.max_trees = max_trees
-        self.max_depth = max_depth
-        self.min_samples_leaf = min_samples_leaf
-        self.subsample = subsample
-        self.patience = patience
-        self.seed = seed
+        self.objective = objective
+        self.max_rounds = max_rounds
+        self.early_stopping = early_stopping
+        self.params = {
+            "learning_rate": learning_rate, "num_leaves": num_leaves,
+            "min_data_in_leaf": min_data_in_leaf, "bagging_fraction": 0.5, "bagging_freq": 1,
+            "feature_fraction": 0.8, "lambda_l2": 1.0, "seed": seed, "verbosity": -1,
+            "num_threads": 0,
+        }
+        if objective == "lambdarank":
+            self.params.update({"objective": "lambdarank", "metric": "ndcg", "eval_at": [3]})
+        else:
+            self.params.update({"metric": "None"})
 
-    def _boost(self, train, n_trees, validation=None):
-        """Fit up to n_trees trees; with validation, also return the validation loss after each."""
-        train = train.sort_values("game", kind="stable")
-        structure = GameStructure(train)
-        x = train[self.features].to_numpy(dtype=float)
-        u = np.zeros(len(train))
-        rng = np.random.default_rng(self.seed)
+    def _dataset(self, frame, reference=None):
+        frame = frame.sort_values("game", kind="stable")
+        structure = GameStructure(frame)
+        data = lightgbm.Dataset(frame[self.features].to_numpy(dtype=float),
+                                label=frame["brownlow_votes"].fillna(0).to_numpy(),
+                                group=structure.sizes, feature_name=self.features,
+                                reference=reference, free_raw_data=False)
+        return frame, structure, data
+
+    def _train(self, train, rounds, validation=None):
+        """Boost up to `rounds` trees, stopping early on the validation season if given."""
+        _, structure, data = self._dataset(train)
+        params = dict(self.params)
+        if self.objective == "listmle":
+            params["objective"] = lambda preds, _: structure.gradientAndHessian(preds)
+        kwargs = {}
         if validation is not None:
-            validation = validation.sort_values("game", kind="stable")
-            validation_structure = GameStructure(validation)
-            x_validation = validation[self.features].to_numpy(dtype=float)
-            u_validation = np.zeros(len(validation))
-        trees, curve = [], []
-        for _ in range(n_trees):
-            gradient, hessian = structure.gradientAndHessian(u)
-            # A random half of the games
-            sample = rng.random(len(structure.game_ids)) < self.subsample
-            rows = sample[structure.game_index]
-            tree = DecisionTreeRegressor(max_depth=self.max_depth,
-                                         min_samples_leaf=self.min_samples_leaf,
-                                         random_state=int(rng.integers(1 << 31)))
-            tree.fit(x[rows], -gradient[rows] / hessian[rows], sample_weight=hessian[rows])
-            trees.append(tree)
-            u += self.learning_rate * tree.predict(x)
-            if validation is not None:
-                u_validation += self.learning_rate * tree.predict(x_validation)
-                curve.append(validation_structure.loss(u_validation))
-                if len(curve) - 1 - int(np.argmin(curve)) >= self.patience:
-                    break
-        return trees, curve
+            _, validation_structure, validation_data = self._dataset(validation, reference=data)
+            kwargs = {"valid_sets": [validation_data],
+                      "callbacks": [lightgbm.early_stopping(self.early_stopping, verbose=False)]}
+            if self.objective == "listmle":
+                kwargs["feval"] = lambda preds, _: (
+                    "plackett_luce", validation_structure.loss(preds), False)
+        return lightgbm.train(params, data, num_boost_round=rounds, **kwargs)
 
     def fit(self, games, train_years):
         voted = gameData.votedGames(games)
         train_years = sorted(set(train_years))
         train = voted[voted["year"].isin(train_years)]
+        self.scale = 1.0
         if len(train_years) >= 4:
             last = train_years[-1]
-            _, curve = self._boost(train[train["year"] != last], self.max_trees,
-                                   train[train["year"] == last])
-            self.n_trees = int(np.argmin(curve)) + 1
+            held_out = train[train["year"] == last].sort_values("game", kind="stable")
+            booster = self._train(train[train["year"] != last], self.max_rounds, held_out)
+            self.n_trees = booster.best_iteration or self.max_rounds
+            if self.objective == "lambdarank":
+                # One scale factor turning ranking scores into Plackett-Luce impacts
+                scores = booster.predict(held_out[self.features].to_numpy(dtype=float),
+                                         num_iteration=self.n_trees)
+                structure = GameStructure(held_out)
+                self.scale = minimize_scalar(lambda a: structure.loss(a * scores),
+                                             bounds=(0.01, 100), method="bounded").x
         else:
-            self.n_trees = self.max_trees // 2
-        self.trees, _ = self._boost(train, self.n_trees)
+            self.n_trees = 200
+        self.booster = self._train(train, self.n_trees)
         return self
 
     def impact(self, frame):
-        x = frame[self.features].to_numpy(dtype=float)
-        return self.learning_rate * sum(tree.predict(x) for tree in self.trees)
+        return self.scale * self.booster.predict(frame[self.features].to_numpy(dtype=float))
 
     def predict(self, games, year):
         rows = games[games["year"] == year]
@@ -168,8 +186,7 @@ class BoostedRanker:
         return seasonTally(predicted, player_sd)
 
     def featureImportance(self):
-        """Share of the loss reduction from splits on each feature."""
-        total = sum(tree.feature_importances_ for tree in self.trees)
-        importance = pd.DataFrame({"feature": self.features,
-                                   "importance": total / total.sum()})
+        """Share of the total loss reduction from splits on each feature."""
+        gain = self.booster.feature_importance("gain")
+        importance = pd.DataFrame({"feature": self.features, "importance": gain / gain.sum()})
         return importance.sort_values("importance", ascending=False)

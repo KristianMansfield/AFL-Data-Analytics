@@ -16,11 +16,12 @@
 # The Monte Carlo model is scored twice: ordered by average votes and by average finishing
 # position.
 #
-# Models: pl (Plackett-Luce Model), ranking (Gradient Boosted Ranking), classifier (Vote
+# Models: pl (Plackett-Luce Model), ranking (Gradient Boosted Ranking with the ListMLE objective),
+# lambdarank (Gradient Boosted Ranking with LightGBM's LambdaRank objective), classifier (Vote
 # Classifier), simulation (Monte Carlo Simulation).
 #
 # Usage: ../venv/bin/python compareModels.py [--basic-stats] [--years 2012-2026] [--min-train 3]
-#        [--models pl ranking classifier simulation] [--sims 5000]
+#        [--models pl ranking lambdarank classifier simulation] [--sims 5000]
 
 import argparse
 import os
@@ -42,16 +43,18 @@ from classifierModel import GROUPS as CLASSIFIER_GROUPS, VoteClassifier  # noqa:
 from rankingModel import GROUPS as RANKING_GROUPS, BoostedRanker  # noqa: E402
 from simulationModel import SimulationModel  # noqa: E402
 
-MODELS = ["pl", "ranking", "classifier", "simulation"]
-NAMES = {"pl": "Plackett-Luce", "ranking": "Gradient boosted ranking",
+MODELS = ["pl", "ranking", "lambdarank", "classifier", "simulation"]
+NAMES = {"pl": "Plackett-Luce", "ranking": "Gradient boosted ranking (ListMLE)",
+         "lambdarank": "Gradient boosted ranking (LambdaRank)",
          "classifier": "Vote classifier", "simulation": "Monte Carlo"}
 
 
 def makeModel(name, basic_stats, sims):
     if name == "pl":
         return BrownlowModel(gameData.featureColumns(gameData.DEFAULT_GROUPS, basic_stats))
-    if name == "ranking":
-        return BoostedRanker(gameData.featureColumns(RANKING_GROUPS, basic_stats))
+    if name in ("ranking", "lambdarank"):
+        return BoostedRanker(gameData.featureColumns(RANKING_GROUPS, basic_stats),
+                             objective="listmle" if name == "ranking" else "lambdarank")
     if name == "classifier":
         return VoteClassifier(gameData.featureColumns(CLASSIFIER_GROUPS, basic_stats), basic_stats)
     return SimulationModel(gameData.featureColumns(gameData.DEFAULT_GROUPS, basic_stats),
