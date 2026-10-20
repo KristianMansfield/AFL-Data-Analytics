@@ -20,6 +20,7 @@ test/reports/
 
 # Reports written by the importers
 reports/
+output/
 
 # Docker compose settings (AFL_POSTGRES_PASSWORD)
 .env
