@@ -14,8 +14,14 @@
 #
 # With --basic-stats it leaves out the afl.com.au features and trains from 2003 instead of 2012.
 #
+# With --ensemble each player's impact is a blend of this model (70%) and the gradient-boosted
+# ranker (30%; ensembleModel.py), written to output/<year>-ensemble/. The blend predicts the
+# contenders' votes game by game better, but wasn't clearly better at picking the winner or the
+# top 10 order in the backtests. --ensemble-weight changes the Plackett-Luce share.
+#
 # Usage: ../../venv/bin/python predictBrownlow.py [--year 2026] [--train-years 2012-2025]
 #        [--basic-stats] [--groups basic advanced rating rank result progression form appeal]
+#        [--ensemble [--ensemble-weight 0.7]]
 
 import argparse
 import os
@@ -24,6 +30,7 @@ import pandas as pd
 
 import gameData
 from brownlowModel import BrownlowModel
+from ensembleModel import DEFAULT_WEIGHT, EnsembleModel
 from predictionReport import addCommonArguments, loadForArguments, printLeaderboard, writeOutputs
 from seasonTally import DEFAULT_PLAYER_SD
 
@@ -43,16 +50,33 @@ def main():
         f"the ranges and win chances (default {DEFAULT_PLAYER_SD}; 0 treats every game as "
         "independent)",
     )
+    parser.add_argument(
+        "--ensemble", action="store_true",
+        help="Blend each player's impact with the gradient-boosted ranker's (needs LightGBM)",
+    )
+    parser.add_argument(
+        "--ensemble-weight", type=float, default=DEFAULT_WEIGHT,
+        help=f"Plackett-Luce share of the blend with --ensemble (default {DEFAULT_WEIGHT})",
+    )
     args = parser.parse_args()
 
     year, train_years, games = loadForArguments(args)
     features = gameData.featureColumns(args.groups, args.basic_stats)
-    print(f"{len(features)} features")
-    model = BrownlowModel(features, l2=args.l2).fit(games, train_years)
+    if args.ensemble:
+        from rankingModel import GROUPS as RANKING_GROUPS
+
+        print(f"{len(features)} features, blended {args.ensemble_weight:.0%} / "
+              f"{1 - args.ensemble_weight:.0%} with the gradient-boosted ranker")
+        model = EnsembleModel(features, gameData.featureColumns(RANKING_GROUPS, args.basic_stats),
+                              weight=args.ensemble_weight, l2=args.l2)
+    else:
+        print(f"{len(features)} features")
+        model = BrownlowModel(features, l2=args.l2)
+    model.fit(games, train_years)
     predicted = model.predict(games, year)
     tally = model.tally(predicted, args.player_sd)
 
-    out_dir = os.path.join(gameData.OUTPUT_DIR, str(year))
+    out_dir = os.path.join(gameData.OUTPUT_DIR, f"{year}-ensemble" if args.ensemble else str(year))
     writeOutputs(predicted, tally, out_dir)
     coefficients = model.coefficients()
     coefficients.to_csv(os.path.join(out_dir, "coefficients.csv"), index=False,

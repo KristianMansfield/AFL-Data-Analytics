@@ -18,6 +18,7 @@ This folder also holds the data preparation and reporting code the other models 
 | [brownlowModel.py](brownlowModel.py) | The full model: the ranked logit plus the umpire appeal feature, which needs a two-stage fit (see below). |
 | [seasonTally.py](seasonTally.py) | Turns the game predictions into a season leaderboard: each player's distribution of season votes (combined exactly from their games), an 80% range, chance of winning, and round-by-round running totals for the leaders. Allows for a player's season-long "umpire appeal" spread (`--player-sd`). |
 | [predictionReport.py](predictionReport.py) | Command line options, output files and the printed leaderboard shared by every model's predict script. |
+| [ensembleModel.py](ensembleModel.py) | The optional blend with the gradient-boosted ranker (`--ensemble`): each player's impact is 70% this model and 30% the LightGBM ListMLE ranker. |
 | [predictBrownlow.py](predictBrownlow.py) | Command line: fits the model on the training seasons and predicts one season. If that season's votes are known, shows them alongside. |
 | [backtest.py](backtest.py) | Command line: predicts each season from earlier seasons only, for several versions of the model with feature groups switched on and off, and compares them. Also checks how honest the season ranges are for different `--player-sd` values. |
 
@@ -29,6 +30,7 @@ cd "Brownlow Prediction/Plackett-Luce Model"
 ../../venv/bin/python predictBrownlow.py --year 2025 --train-years 2012-2024
 ../../venv/bin/python predictBrownlow.py --groups basic advanced rating rank result   # pick feature groups
 ../../venv/bin/python predictBrownlow.py --basic-stats         # without afl.com.au stats, trained from 2003
+../../venv/bin/python predictBrownlow.py --ensemble            # blend 70/30 with the gradient-boosted ranker
 ../../venv/bin/python backtest.py                              # ~5 minutes, tests 2015-2026
 ../../venv/bin/python backtest.py --basic-stats                # tests 2006-2026 (21 seasons)
 ../../venv/bin/python backtest.py --loso                       # train on every other season instead
@@ -40,6 +42,13 @@ rating points, rating rank and rating form) and uses seasons from 2003, when eve
 first recorded. That roughly doubles the number of test seasons. This matters for judging the
 winner and top 10, because each season gives only one result: with 12 test seasons, one more
 correctly picked winner is easily luck.
+
+`--ensemble` blends each player's impact with the gradient-boosted ranker's (70% Plackett-Luce,
+30% ranker; `--ensemble-weight` changes the share) and writes to `output/<year>-ensemble/`. In the
+backtests the blend predicted the actual top 10's votes game by game better than this model alone
+in 12 of 12 seasons (2015–2026) and 19 of 21 (2006–2026), but it wasn't clearly better at picking
+the winner (mean rank 2.08 against 2.25 for 2015–2026, 2.62 against 2.43 for 2006–2026) or the
+top 10 order (0.678 against 0.691, 0.618 against 0.609), so it's off by default. It needs LightGBM.
 
 `predictBrownlow.py` writes to `output/<year>/`:
 

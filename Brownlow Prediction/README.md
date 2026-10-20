@@ -28,6 +28,9 @@ cd "Brownlow Prediction/Vote Classifier";          ../../venv/bin/python predict
 cd "Brownlow Prediction/Monte Carlo Simulation";   ../../venv/bin/python predictSimulation.py   # ~10 s
 ```
 
+`predictBrownlow.py --ensemble` blends the Plackett-Luce model 70/30 with the gradient-boosted
+ranker; see the [Plackett-Luce README](Plackett-Luce%20Model/README.md) for how it compared.
+
 Every predict script takes `--year`, `--train-years`, `--basic-stats` (leave out the afl.com.au
 stats and train from 2003) and `--top`; `--help` lists each model's own options.
 
