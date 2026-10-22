@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from dbConnection import createReaderConnection  # noqa: E402
+from dbConnection import createReaderConnection, finalRound  # noqa: E402
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 FEATURES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "features.ini")
@@ -186,7 +186,7 @@ def loadFeatureSelection(path):
 def loadGames(years, include_finals=False):
     """One row per player per game for the seasons."""
     db = createReaderConnection()
-    sql = GAMES_SQL.replace("{finals}", "" if include_finals else "AND NOT r.final")
+    sql = GAMES_SQL.replace("{finals}", "" if include_finals else f"AND NOT {finalRound()}")
     cursor = db.execute(sql, years)
     columns = [d[0] for d in cursor.description]
     games = pd.DataFrame(cursor.fetchall(), columns=columns)

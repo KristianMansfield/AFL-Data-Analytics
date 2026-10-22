@@ -38,7 +38,7 @@ import pandas as pd
 # The repository root, two folders up, holds dbConnection.py
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
-from dbConnection import createReaderConnection  # noqa: E402
+from dbConnection import createReaderConnection, finalRound  # noqa: E402
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
@@ -104,11 +104,11 @@ JOIN seasons s ON s.id = r.season
 JOIN players p ON p.id = pgs.player
 JOIN teams t ON t.id = pgs.team
 LEFT JOIN aflcom_player_game_stats a ON a.player = pgs.player AND a.game = pgs.game
-WHERE s.year BETWEEN ? AND ? AND NOT r.final
+WHERE s.year BETWEEN ? AND ? AND NOT {finalRound()}
 ORDER BY g.start_datetime, g.id, pgs.team, pgs.player
 """
 
-PROGRESSION_SQL = """
+PROGRESSION_SQL = f"""
 SELECT
   sp.game, sp.player, sp.team, sp.quarter, sp.time, sp.result, sp.home_score, sp.away_score,
   g.home_team, g.winning_team, g.q1_seconds, g.q2_seconds, g.q3_seconds, g.q4_seconds
@@ -116,18 +116,18 @@ FROM score_progressions sp
 JOIN games g ON g.id = sp.game
 JOIN rounds r ON r.id = g.round
 JOIN seasons s ON s.id = r.season
-WHERE s.year BETWEEN ? AND ? AND NOT r.final
+WHERE s.year BETWEEN ? AND ? AND NOT {finalRound()}
 ORDER BY sp.game, sp.quarter, sp.time, sp.id
 """
 
 # Votes and games in earlier seasons, for the reputation feature
-PRIOR_VOTES_SQL = """
+PRIOR_VOTES_SQL = f"""
 SELECT s.year, pgs.player, SUM(pgs.brownlow_votes) AS votes, COUNT(*) AS games
 FROM player_game_stats pgs
 JOIN games g ON g.id = pgs.game
 JOIN rounds r ON r.id = g.round
 JOIN seasons s ON s.id = r.season
-WHERE s.year BETWEEN ? AND ? AND NOT r.final AND pgs.brownlow_votes IS NOT NULL
+WHERE s.year BETWEEN ? AND ? AND NOT {finalRound()} AND pgs.brownlow_votes IS NOT NULL
 GROUP BY s.year, pgs.player
 """
 

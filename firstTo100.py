@@ -21,12 +21,12 @@ import os
 import numpy as np
 import pandas as pd
 
-from dbConnection import createReaderConnection
+from dbConnection import createReaderConnection, finalRound
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
-GAMES_SQL = """
-SELECT g.id AS game, s.year, r.identifier AS round, r.final, g.home_team, g.away_team,
+GAMES_SQL = f"""
+SELECT g.id AS game, s.year, r.identifier AS round, {finalRound()} AS final, g.home_team, g.away_team,
        g.winning_team, g.final_home_score, g.final_away_score,
        COALESCE(ht.aflcom_abbreviation, ht.short_name) AS home_name,
        COALESCE(at.aflcom_abbreviation, at.short_name) AS away_name

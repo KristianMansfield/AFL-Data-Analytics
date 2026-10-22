@@ -22,7 +22,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import sys
 import numpy as np
 from scipy import stats
-from dbConnection import createReaderConnection
+from dbConnection import createReaderConnection, finalRound
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
@@ -70,7 +70,7 @@ def genCorrolationScore(year, show_graph=False, output=False, db=None):
     finals = []
     round_names = {}
 
-    sql = ("SELECT * FROM (SELECT games.winning_score, games.losing_score, r.sequence, r.identifier, r.final, "
+    sql = ("SELECT * FROM (SELECT games.winning_score, games.losing_score, r.sequence, r.identifier, " + finalRound() + " AS final, "
            + LADDER_BEFORE_GAME.format(team="games.winning_team") + " AS winning_position, "
            + LADDER_BEFORE_GAME.format(team="games.losing_team") + " AS losing_position "
            "FROM games INNER JOIN rounds r ON games.round = r.id INNER JOIN seasons s ON s.id = r.season "
@@ -84,8 +84,6 @@ def genCorrolationScore(year, show_graph=False, output=False, db=None):
 
     for res in results:
         winning_score, losing_score, sequence, round_name, final, winning_position, losing_position = res
-        # The database flags 2026's Wildcard Final round as not a final, so go by the name too
-        final = final or "final" in str(round_name).lower()
         margins.append(winning_score - losing_score)
         position_differences.append(losing_position - winning_position)
         rounds.append(sequence)

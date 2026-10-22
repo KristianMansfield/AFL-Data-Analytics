@@ -56,11 +56,11 @@ from scipy import sparse
 from scipy.stats import norm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from dbConnection import createReaderConnection  # noqa: E402
+from dbConnection import createReaderConnection, finalRound  # noqa: E402
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
-GAMES_SQL = """
+GAMES_SQL = f"""
 SELECT g.id AS game, s.year, g.home_team, g.away_team, g.winning_team,
        g.final_home_score, g.final_away_score,
        home.frees_for AS home_frees_for, home.frees_against AS home_frees_against
@@ -68,7 +68,7 @@ FROM games g
 JOIN rounds r ON r.id = g.round
 JOIN seasons s ON s.id = r.season
 JOIN team_game_stats home ON home.game = g.id AND home.team = g.home_team
-WHERE s.year >= ? AND NOT r.final AND home.frees_for IS NOT NULL
+WHERE s.year >= ? AND NOT {finalRound()} AND home.frees_for IS NOT NULL
 ORDER BY g.start_datetime, g.id
 """
 

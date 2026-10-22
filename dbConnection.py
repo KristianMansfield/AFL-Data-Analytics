@@ -92,6 +92,13 @@ class Database:
         self.connection.close()
 
 
+def finalRound(alias="r"):
+    """SQL that's true for a finals round, for a rounds table aliased `alias`. A round named
+    "... Final" counts even if it isn't flagged: imports before AFL-Data-Scraping's fix stored
+    2026's Wildcard Final with final = false."""
+    return f"({alias}.final OR {alias}.identifier LIKE '%Final')"
+
+
 def createReaderConnection(url=None):
     _load_env_file()
     return Database(url or os.environ.get("AFL_DB_URL", DEFAULT_URL))
